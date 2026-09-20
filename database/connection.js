@@ -2,7 +2,9 @@ const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
 
-const storageDirectory = path.join(__dirname, "..", "storage");
+const storageDirectory = process.env.SQLITE_DATA_DIR
+  ? path.resolve(process.env.SQLITE_DATA_DIR)
+  : path.join(__dirname, "..", "storage");
 
 if (!fs.existsSync(storageDirectory)) {
   fs.mkdirSync(storageDirectory, { recursive: true });
@@ -75,9 +77,7 @@ const workOrderColumns = db
   .map((column) => column.name);
 
 if (!workOrderColumns.includes("crm_order_type")) {
-  db.exec(
-    "ALTER TABLE work_orders ADD COLUMN crm_order_type TEXT"
-  );
+  db.exec("ALTER TABLE work_orders ADD COLUMN crm_order_type TEXT");
 }
 
 module.exports = { db };
