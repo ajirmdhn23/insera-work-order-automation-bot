@@ -1,0 +1,24 @@
+# Dependency Node.js
+node_modules/
+
+# Token dan konfigurasi rahasia
+.env
+.env.*
+!.env.example
+
+# Database lokal / data pengguna
+storage/
+*.db
+*.sqlite
+*.sqlite3
+
+# Log aplikasi
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# File sistem/editor
+.DS_Store
+.vscode/
