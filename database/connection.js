@@ -69,6 +69,17 @@ db.exec(`
     last_attempt_at TEXT,
     last_error TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS notification_groups (
+    chat_id TEXT PRIMARY KEY,
+    chat_title TEXT NOT NULL,
+    chat_type TEXT NOT NULL,
+    added_by_telegram_id TEXT NOT NULL,
+    added_by_name TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 const workOrderColumns = db

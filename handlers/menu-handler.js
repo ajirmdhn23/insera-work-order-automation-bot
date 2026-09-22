@@ -4,10 +4,29 @@ const {
 } = require("../database/user-repository");
 
 const {
+  saveWorkOrderSyncInterval
+} = require("../database/work-order-repository");
+
+const {
   showWorkOrderReport
 } = require("./work-order-handler");
 
-const { buildRegistrationRecap } = require("./registration-handler");
+const {
+  buildRegistrationRecap
+} = require("./registration-handler");
+
+const {
+  ALLOWED_INTERVALS,
+  runWorkOrderSync,
+  setWorkOrderSyncInterval,
+  getIntervalLabel,
+  getWorkOrderSyncStatus
+} = require("../jobs/work-order-sync-job");
+
+const {
+  formatTanggalIndonesia,
+  formatWaktuWib
+} = require("../utils/date");
 
 function requireRegisteredUser(ctx) {
   const user = findUserByTelegramId(ctx.from.id);
@@ -30,6 +49,16 @@ function mainMenuKeyboard() {
         {
           text: "📋 Laporan Work Order",
           callback_data: "MENU_WORK_ORDER"
+        }
+      ],
+      [
+        {
+          text: "🔄 Refresh Data",
+          callback_data: "MENU_REFRESH_DATA"
+        },
+        {
+          text: "⚙️ Pengaturan Data",
+          callback_data: "MENU_SYNC_SETTINGS"
         }
       ],
       [
@@ -112,11 +141,15 @@ function serviceAreaKeyboard() {
 }
 
 function workOrderLocationMessage() {
+  const syncStatus = getWorkOrderSyncStatus();
+
   return `📋 <b>Laporan Work Order</b>
 
 Pilih wilayah Service Area untuk melihat daftar Work Order.
 
-🔄 Data diperbarui otomatis setiap 1 jam.
+🔄 Data diperbarui otomatis ${getIntervalLabel(
+    syncStatus.intervalMinutes
+  )}.
 🔎 Setelah daftar muncul, ketik <code>/wo NOMOR_WO</code> untuk melihat detail satu Work Order.`;
 }
 
@@ -125,6 +158,81 @@ function mainMenuMessage(user) {
 
 Halo, <b>${user.full_name}</b>.
 Silakan pilih menu yang tersedia.`;
+}
+
+function syncSettingsKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: "5 menit",
+          callback_data: "SET_SYNC_INTERVAL_5"
+        },
+        {
+          text: "10 menit",
+          callback_data: "SET_SYNC_INTERVAL_10"
+        }
+      ],
+      [
+        {
+          text: "15 menit",
+          callback_data: "SET_SYNC_INTERVAL_15"
+        },
+        {
+          text: "30 menit",
+          callback_data: "SET_SYNC_INTERVAL_30"
+        }
+      ],
+      [
+        {
+          text: "1 jam",
+          callback_data: "SET_SYNC_INTERVAL_60"
+        }
+      ],
+      [
+        {
+          text: "🏠 Menu Utama",
+          callback_data: "BACK_TO_MAIN_MENU"
+        }
+      ]
+    ]
+  };
+}
+
+function syncSettingsMessage() {
+  const syncStatus = getWorkOrderSyncStatus();
+
+  return `⚙️ <b>Pengaturan Sinkronisasi Data</b>
+
+Interval aktif: <b>${getIntervalLabel(
+    syncStatus.intervalMinutes
+  )}</b>
+
+Pilih interval pembaruan data Work Order dari Insera.
+
+⚠️ Interval yang lebih pendek akan lebih sering mengambil data dari Insera.`;
+}
+
+function formatRefreshResult(result) {
+  if (result.skipped) {
+    return `⏳ <b>Sinkronisasi sedang berjalan.</b>
+
+Refresh tidak dijalankan karena proses pembaruan data sebelumnya belum selesai.`;
+  }
+
+  const updatedAt = new Date(result.lastSyncedAt);
+
+  const updatedLabel = Number.isNaN(updatedAt.getTime())
+    ? "Belum tersedia"
+    : `${formatTanggalIndonesia(updatedAt)} ${formatWaktuWib(
+        updatedAt
+      )} WIB`;
+
+  return `✅ <b>Refresh data berhasil.</b>
+
+📥 Data diambil dari Insera: <b>${result.totalFetched}</b>
+💾 Work Order disimpan: <b>${result.totalSaved}</b>
+🕒 Pembaruan terakhir: <b>${updatedLabel}</b>`;
 }
 
 function sendMainMenu(ctx, user) {
@@ -188,62 +296,47 @@ Setelah data dihapus, saat mengetik <code>/start</code> kamu akan diarahkan ke f
 }
 
 function showHelp(ctx, user) {
+  const syncStatus = getWorkOrderSyncStatus();
+
   return ctx.reply(
-    `❓ <b>Bantuan Automasi WO Insera</b>
-━━━━━━━━━━━━━━━━━━━━
+    `❓ <b>Pusat Bantuan — Automasi WO Insera</b>
 
-👤 <b>Profil Saya</b>
-Menampilkan data registrasi, waktu pengisian, serta lokasi yang telah dibagikan.
+Bot ini digunakan untuk melihat Work Order Insera, memantau STARTWORK, memperbarui data, dan menerima notifikasi perubahan WO.
 
-📋 <b>Laporan Work Order</b>
-Pilih menu <b>📋 Laporan Work Order</b>, lalu pilih wilayah Service Area untuk melihat daftar Work Order.
+<b>Fitur Utama</b>
+📋 <b>Laporan Work Order</b> — pilih Service Area untuk melihat daftar WO.
+🔎 <b>Detail Work Order</b> — lihat informasi lengkap berdasarkan nomor WO.
+🚨 <b>Monitoring STARTWORK</b> — lihat daftar WO berstatus STARTWORK.
+🔄 <b>Refresh Data</b> — ambil data terbaru dari Insera secara manual.
+⚙️ <b>Pengaturan Data</b> — atur pembaruan otomatis; saat ini <b>${getIntervalLabel(
+      syncStatus.intervalMinutes
+    )}</b>.
+📊 <b>Status Bot</b> — cek sync terakhir, cache, database, dan kondisi bot.
+📢 <b>Notifikasi Grup</b> — kirim perubahan STARTWORK ke grup yang terdaftar.
+👤 <b>Profil Saya</b> — lihat data registrasi akun.
+🚪 <b>Keluar</b> — hapus data registrasi setelah konfirmasi.
 
-Daftar menampilkan maksimal <b>10 Work Order</b> per halaman. Gunakan tombol <b>Sebelumnya</b> atau <b>Berikutnya</b> untuk berpindah halaman.
+<b>Command</b>
+<code>/start</code> — buka menu utama
+<code>/wo NOMOR_WO</code> — detail WO, contoh: <code>/wo W0064783278</code>
+<code>/sc</code> — daftar STARTWORK
+<code>/refresh</code> — refresh data Work Order
+<code>/status</code> — dashboard status bot
+<code>/addgroup</code> — daftarkan grup notifikasi
+<code>/groups</code> — lihat grup notifikasi aktif
+<code>/batal</code> — batalkan proses registrasi
 
-📍 <b>Pilih Wilayah Lain</b>
-Gunakan tombol ini untuk kembali ke daftar Service Area dan memilih wilayah lain. Tampilan daftar akan diperbarui pada bubble yang sama agar chat tidak menumpuk.
-
-🔎 <b>Detail Work Order</b>
-Salin nomor WO dari daftar, kemudian kirim command berikut:
-
-<code>/wo NOMOR_WO</code>
-
-Contoh:
-
-<code>/wo WO064XXXXXX</code>
-
-🔄 <b>Pembaruan Data</b>
-Data Work Order diperbarui otomatis setiap 1 jam. Waktu pembaruan terakhir ditampilkan pada laporan dan detail Work Order.
-
-📌 <b>Wilayah Service Area</b>
-• SA Batu: BTU, NTG, KPO
-• SA Bululawang: BLB
-• SA Klojen: KLJ
-• SA Kepanjen: KEP, PGK, SBP, GKW, DNO, GDG
-• SA Turen: DPT, SBM, APG, TUR, BNR, GDI
-• SA Malang: MLG, SWJ, BRG
-• SA Sawojajar: PKS, TMP, LWG, SGS
-• SA Blitar: BLR, SNT, PAN, BNU, KBN, LDY, WGI
-• SA Tulungagung: CAT, KWR, NGU, TUL
-
-🚪 <b>Keluar</b>
-Menghapus data registrasi setelah konfirmasi. Jika ingin menggunakan bot lagi, kirim <code>/start</code> dan lakukan registrasi ulang.
-
-<b>Command tersedia</b>
-<code>/start</code> — membuka bot atau menu utama
-<code>/wo NOMOR_WO</code> — melihat detail Work Order
-<code>/status</code> — melihat status bot
-<code>/batal</code> — membatalkan proses registrasi
+<b>Catatan</b>
+Jika refresh atau sync menampilkan timeout, bot tetap aktif. Itu berarti API Insera sedang lambat/tidak merespons; coba kembali beberapa saat kemudian atau cek <code>/status</code>.
 
 ━━━━━━━━━━━━━━━━━━━━
-👤 User aktif: <b>${user.full_name}</b>`,
+👤 <b>${user.full_name}</b> • ${user.work_unit}`,
     {
       parse_mode: "HTML",
       reply_markup: mainMenuKeyboard()
     }
   );
 }
-
 function registerMenuHandler(bot) {
   bot.action("MENU_WORK_ORDER", async (ctx) => {
     await ctx.answerCbQuery();
@@ -269,6 +362,116 @@ function registerMenuHandler(bot) {
     return showWorkOrderLocationMenu(ctx);
   });
 
+  bot.action("MENU_REFRESH_DATA", async (ctx) => {
+    const user = requireRegisteredUser(ctx);
+
+    if (!user) {
+      return ctx.answerCbQuery();
+    }
+
+    const syncStatus = getWorkOrderSyncStatus();
+
+    if (syncStatus.isRunning) {
+      return ctx.answerCbQuery(
+        "Sinkronisasi sedang berjalan. Tunggu hingga selesai.",
+        { show_alert: true }
+      );
+    }
+
+    await ctx.answerCbQuery("Memulai refresh data...");
+
+    await ctx.reply(
+      `🔄 <b>Memulai refresh data Work Order...</b>
+
+Bot sedang mengambil data terbaru dari Insera. Mohon tunggu.`,
+      { parse_mode: "HTML" }
+    );
+
+    try {
+      const result = await runWorkOrderSync("manual_refresh_button");
+
+      return ctx.reply(formatRefreshResult(result), {
+        parse_mode: "HTML",
+        reply_markup: mainMenuKeyboard()
+      });
+    } catch (error) {
+      console.error("[menu-refresh-error]", error.message);
+
+      return ctx.reply(
+        `❌ <b>Refresh data gagal.</b>
+
+${error.message}`,
+        {
+          parse_mode: "HTML",
+          reply_markup: mainMenuKeyboard()
+        }
+      );
+    }
+  });
+
+  bot.action("MENU_SYNC_SETTINGS", async (ctx) => {
+    await ctx.answerCbQuery();
+
+    const user = requireRegisteredUser(ctx);
+
+    if (!user) {
+      return;
+    }
+
+    return ctx.editMessageText(syncSettingsMessage(), {
+      parse_mode: "HTML",
+      reply_markup: syncSettingsKeyboard()
+    });
+  });
+
+  bot.action(/^SET_SYNC_INTERVAL_(5|10|15|30|60)$/, async (ctx) => {
+    const user = requireRegisteredUser(ctx);
+
+    if (!user) {
+      return;
+    }
+
+    const intervalMinutes = Number(ctx.match[1]);
+
+    if (!ALLOWED_INTERVALS.includes(intervalMinutes)) {
+      return ctx.answerCbQuery("Interval tidak valid.", {
+        show_alert: true
+      });
+    }
+
+    try {
+      saveWorkOrderSyncInterval(intervalMinutes);
+      setWorkOrderSyncInterval(intervalMinutes);
+
+      await ctx.answerCbQuery(
+        `Interval diubah menjadi ${getIntervalLabel(intervalMinutes)}.`
+      );
+
+      return ctx.editMessageText(
+        `✅ <b>Interval sinkronisasi berhasil diubah.</b>
+
+Data Work Order sekarang diperbarui otomatis <b>${getIntervalLabel(
+          intervalMinutes
+        )}</b>.
+
+Pengaturan ini tersimpan meskipun bot direstart.`,
+        {
+          parse_mode: "HTML",
+          reply_markup: syncSettingsKeyboard()
+        }
+      );
+    } catch (error) {
+      console.error("[set-sync-interval-error]", error.message);
+
+      return ctx.answerCbQuery(
+        "Interval gagal diubah. Silakan coba lagi.",
+        {
+          show_alert: true
+        }
+      );
+    }
+  });
+
   bot.action(
     /^SA_(BTU|BLB|KLJ|KEP|TUR|MLG|SWJ|BLR|TUL)$/,
     async (ctx) => {
@@ -280,12 +483,7 @@ function registerMenuHandler(bot) {
         return;
       }
 
-      return showWorkOrderReport(
-        ctx,
-        ctx.match[0],
-        1,
-        true
-      );
+      return showWorkOrderReport(ctx, ctx.match[0], 1, true);
     }
   );
 
@@ -398,6 +596,39 @@ Saat ingin menggunakan bot lagi, kirim <code>/start</code> dan isi form registra
     }
 
     return showWorkOrderLocationMenu(ctx);
+  });
+
+  bot.hears("🔄 Refresh Data", async (ctx) => {
+    const user = requireRegisteredUser(ctx);
+
+    if (!user) {
+      return;
+    }
+
+    const syncStatus = getWorkOrderSyncStatus();
+
+    if (syncStatus.isRunning) {
+      return ctx.reply(
+        "⏳ Sinkronisasi sedang berjalan. Tunggu hingga selesai."
+      );
+    }
+
+    await ctx.reply(
+      "🔄 Memulai refresh data Work Order dari Insera. Mohon tunggu."
+    );
+
+    try {
+      const result = await runWorkOrderSync("manual_refresh_button");
+
+      return ctx.reply(formatRefreshResult(result), {
+        parse_mode: "HTML",
+        reply_markup: mainMenuKeyboard()
+      });
+    } catch (error) {
+      console.error("[menu-refresh-hears-error]", error.message);
+
+      return ctx.reply(`❌ Refresh data gagal.\n\n${error.message}`);
+    }
   });
 
   bot.hears("👤 Profil Saya", (ctx) => {

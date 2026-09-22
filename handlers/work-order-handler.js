@@ -13,6 +13,11 @@ const {
   buildWorkOrderDetail
 } = require("../services/report-service");
 
+const {
+  formatTanggalIndonesia,
+  formatWaktuWib
+} = require("../utils/date");
+
 const WORK_ORDERS_PER_PAGE = 10;
 
 function requireRegisteredUser(ctx) {
@@ -27,6 +32,10 @@ function requireRegisteredUser(ctx) {
   }
 
   return user;
+}
+
+function normalizeText(value) {
+  return String(value || "").trim().toUpperCase();
 }
 
 function extractWorkOrderNumber(ctx) {
@@ -114,6 +123,47 @@ function reportKeyboard(serviceAreaCode, page, totalPages) {
   };
 }
 
+function startworkReportKeyboard(page, totalPages) {
+  const navigationButtons = [];
+
+  if (page > 1) {
+    navigationButtons.push({
+      text: "⬅️ Sebelumnya",
+      callback_data: `SC_PAGE:${page - 1}`
+    });
+  }
+
+  navigationButtons.push({
+    text: `${page}/${totalPages}`,
+    callback_data: "SC_PAGE_INFO"
+  });
+
+  if (page < totalPages) {
+    navigationButtons.push({
+      text: "Berikutnya ➡️",
+      callback_data: `SC_PAGE:${page + 1}`
+    });
+  }
+
+  return {
+    inline_keyboard: [
+      ...(totalPages > 1 ? [navigationButtons] : []),
+      [
+        {
+          text: "📍 Laporan Semua Work Order",
+          callback_data: "MENU_WORK_ORDER"
+        }
+      ],
+      [
+        {
+          text: "🏠 Menu Utama",
+          callback_data: "BACK_TO_MAIN_MENU"
+        }
+      ]
+    ]
+  };
+}
+
 function getReportData(serviceAreaCode, requestedPage = 1) {
   const serviceArea = getServiceAreaByCode(serviceAreaCode);
 
@@ -122,6 +172,7 @@ function getReportData(serviceAreaCode, requestedPage = 1) {
   }
 
   const workOrders = getWorkOrdersByServiceArea(serviceAreaCode);
+
   const totalPages = Math.max(
     1,
     Math.ceil(workOrders.length / WORK_ORDERS_PER_PAGE)
@@ -138,6 +189,115 @@ function getReportData(serviceAreaCode, requestedPage = 1) {
     page,
     totalPages
   };
+}
+
+function getStartworkReportData(requestedPage = 1) {
+  const workOrders = getAllWorkOrders().filter(
+    (workOrder) => normalizeText(workOrder.status) === "STARTWORK"
+  );
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(workOrders.length / WORK_ORDERS_PER_PAGE)
+  );
+
+  const page = Math.min(
+    Math.max(Number(requestedPage) || 1, 1),
+    totalPages
+  );
+
+  return {
+    workOrders,
+    page,
+    totalPages
+  };
+}
+
+function formatLastUpdated(lastSyncedAt) {
+  if (!lastSyncedAt) {
+    return "Belum tersedia";
+  }
+
+  const syncDate = new Date(lastSyncedAt);
+
+  if (Number.isNaN(syncDate.getTime())) {
+    return "Belum tersedia";
+  }
+
+  return `${formatTanggalIndonesia(syncDate)} ${formatWaktuWib(
+    syncDate
+  )} WIB`;
+}
+
+function buildStartworkReport(workOrders, lastSyncedAt, page) {
+  const lastUpdatedLabel = formatLastUpdated(lastSyncedAt);
+
+  if (workOrders.length === 0) {
+    return `📊 <b>Laporan STARTWORK</b>
+
+Tidak ada Work Order dengan status <b>STARTWORK</b> saat ini.
+
+🔄 Data terakhir diperbarui: <b>${lastUpdatedLabel}</b>`;
+  }
+
+  const startIndex = (page - 1) * WORK_ORDERS_PER_PAGE;
+
+  const pageWorkOrders = workOrders.slice(
+    startIndex,
+    startIndex + WORK_ORDERS_PER_PAGE
+  );
+
+  const rows = pageWorkOrders.map((workOrder, index) => {
+    const number = startIndex + index + 1;
+
+    const serviceAreaName = getServiceAreaNameByWorkZone(
+      workOrder.workZone
+    );
+
+    return `${number}. <code>${workOrder.woNumber}</code>
+📍 ${serviceAreaName} • Zona: ${workOrder.workZone || "-"}
+🏷️ ${workOrder.description || "Tanpa deskripsi"}`;
+  });
+
+  return `📊 <b>Laporan STARTWORK</b>
+
+Total STARTWORK: <b>${workOrders.length}</b>
+🔄 Data terakhir diperbarui: <b>${lastUpdatedLabel}</b>
+
+${rows.join("\n\n")}
+
+<i>Menampilkan ${startIndex + 1}–${
+    startIndex + pageWorkOrders.length
+  } dari ${workOrders.length} Work Order STARTWORK.</i>
+
+🔎 Ketik <code>/wo NOMOR_WO</code> untuk melihat detail.`;
+}
+
+async function showStartworkReport(
+  ctx,
+  requestedPage = 1,
+  editMessage = false
+) {
+  const { workOrders, page, totalPages } = getStartworkReportData(
+    requestedPage
+  );
+
+  const message = buildStartworkReport(
+    workOrders,
+    getLastSyncedAt(workOrders),
+    page
+  );
+
+  const extra = {
+    parse_mode: "HTML",
+    reply_markup: startworkReportKeyboard(page, totalPages)
+  };
+
+  if (editMessage) {
+    return ctx.editMessageText(message, extra);
+  }
+
+  return ctx.reply(message, extra);
 }
 
 async function showWorkOrderReport(
@@ -262,6 +422,34 @@ function registerWorkOrderHandler(bot) {
           ]
         }
       }
+    );
+  });
+
+  bot.command("sc", async (ctx) => {
+    const user = requireRegisteredUser(ctx);
+
+    if (!user) {
+      return;
+    }
+
+    return showStartworkReport(ctx);
+  });
+
+  bot.action(/^SC_PAGE:(\d+)$/, async (ctx) => {
+    const user = requireRegisteredUser(ctx);
+
+    if (!user) {
+      return ctx.answerCbQuery();
+    }
+
+    await ctx.answerCbQuery();
+
+    return showStartworkReport(ctx, Number(ctx.match[1]), true);
+  });
+
+  bot.action("SC_PAGE_INFO", async (ctx) => {
+    await ctx.answerCbQuery(
+      "Gunakan tombol Sebelumnya atau Berikutnya."
     );
   });
 

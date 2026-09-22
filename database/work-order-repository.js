@@ -1,5 +1,7 @@
 const { db } = require("./connection");
 
+const SYNC_INTERVAL_SETTING_KEY = "work_order_sync_interval_minutes";
+
 function normalizeText(value) {
   return String(value ?? "").trim();
 }
@@ -7,6 +9,66 @@ function normalizeText(value) {
 function toNullableText(value) {
   const text = normalizeText(value);
   return text || null;
+}
+
+function ensureAppSettingsTable() {
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      setting_key TEXT PRIMARY KEY,
+      setting_value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `).run();
+}
+
+function getSetting(settingKey) {
+  ensureAppSettingsTable();
+
+  const row = db
+    .prepare(`
+      SELECT setting_value
+      FROM app_settings
+      WHERE setting_key = ?
+    `)
+    .get(normalizeText(settingKey));
+
+  return row?.setting_value || null;
+}
+
+function saveSetting(settingKey, settingValue) {
+  ensureAppSettingsTable();
+
+  const updatedAt = new Date().toISOString();
+
+  db.prepare(`
+    INSERT INTO app_settings (
+      setting_key,
+      setting_value,
+      updated_at
+    )
+    VALUES (
+      @settingKey,
+      @settingValue,
+      @updatedAt
+    )
+    ON CONFLICT(setting_key) DO UPDATE SET
+      setting_value = excluded.setting_value,
+      updated_at = excluded.updated_at
+  `).run({
+    settingKey: normalizeText(settingKey),
+    settingValue: normalizeText(settingValue),
+    updatedAt
+  });
+}
+
+function getSavedWorkOrderSyncInterval() {
+  const value = Number(getSetting(SYNC_INTERVAL_SETTING_KEY));
+
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function saveWorkOrderSyncInterval(intervalMinutes) {
+  saveSetting(SYNC_INTERVAL_SETTING_KEY, Number(intervalMinutes));
 }
 
 function mapDatabaseRowToWorkOrder(row) {
@@ -155,9 +217,7 @@ function getSavedWorkOrdersByWorkZones(workZones) {
     return [];
   }
 
-  const placeholders = normalizedWorkZones
-    .map(() => "?")
-    .join(", ");
+  const placeholders = normalizedWorkZones.map(() => "?").join(", ");
 
   return db
     .prepare(`
@@ -230,13 +290,15 @@ function saveSyncFailure(errorMessage) {
 }
 
 function getWorkOrderSyncStatus() {
-  return db
-    .prepare(`
-      SELECT *
-      FROM sync_status
-      WHERE sync_key = 'work_orders'
-    `)
-    .get() || null;
+  return (
+    db
+      .prepare(`
+        SELECT *
+        FROM sync_status
+        WHERE sync_key = 'work_orders'
+      `)
+      .get() || null
+  );
 }
 
 module.exports = {
@@ -247,5 +309,7 @@ module.exports = {
   getLatestSavedSyncAt,
   saveSyncSuccess,
   saveSyncFailure,
-  getWorkOrderSyncStatus
+  getWorkOrderSyncStatus,
+  getSavedWorkOrderSyncInterval,
+  saveWorkOrderSyncInterval
 };
