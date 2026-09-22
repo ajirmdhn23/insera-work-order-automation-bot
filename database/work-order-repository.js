@@ -100,7 +100,8 @@ function prepareWorkOrder(workOrder, syncedAt) {
   return {
     woNumber: normalizeText(workOrder.woNumber),
     locationCode: toNullableText(workOrder.locationCode) || "UNKNOWN",
-    locationName: toNullableText(workOrder.locationName) || "Tidak diketahui",
+    locationName:
+      toNullableText(workOrder.locationName) || "Tidak diketahui",
     status: toNullableText(workOrder.status),
     description: toNullableText(workOrder.description),
     ownerGroup: toNullableText(workOrder.ownerGroup),
@@ -117,14 +118,37 @@ function prepareWorkOrder(workOrder, syncedAt) {
   };
 }
 
+function removeDuplicateWorkOrders(workOrders) {
+  const uniqueWorkOrders = new Map();
+
+  for (const workOrder of workOrders) {
+    uniqueWorkOrders.set(workOrder.woNumber, workOrder);
+  }
+
+  return [...uniqueWorkOrders.values()];
+}
+
 function saveWorkOrders(workOrders, syncedAt = new Date().toISOString()) {
   const normalizedWorkOrders = (workOrders || [])
     .map((workOrder) => prepareWorkOrder(workOrder, syncedAt))
     .filter((workOrder) => workOrder.woNumber);
 
-  if (normalizedWorkOrders.length === 0) {
+  const uniqueWorkOrders = removeDuplicateWorkOrders(
+    normalizedWorkOrders
+  );
+
+  if (uniqueWorkOrders.length === 0) {
     throw new Error(
       "Penyimpanan dibatalkan: tidak ada Work Order valid dari hasil sinkronisasi."
+    );
+  }
+
+  const duplicateCount =
+    normalizedWorkOrders.length - uniqueWorkOrders.length;
+
+  if (duplicateCount > 0) {
+    console.warn(
+      `[work-order-repository] ${duplicateCount} WO duplikat dari API diabaikan.`
     );
   }
 
@@ -170,7 +194,7 @@ function saveWorkOrders(workOrders, syncedAt = new Date().toISOString()) {
   const replaceAllWorkOrders = db.transaction(() => {
     db.prepare("DELETE FROM work_orders").run();
 
-    for (const workOrder of normalizedWorkOrders) {
+    for (const workOrder of uniqueWorkOrders) {
       insertWorkOrder.run(workOrder);
     }
   });
@@ -178,7 +202,8 @@ function saveWorkOrders(workOrders, syncedAt = new Date().toISOString()) {
   replaceAllWorkOrders();
 
   return {
-    saved: normalizedWorkOrders.length,
+    saved: uniqueWorkOrders.length,
+    duplicatesIgnored: duplicateCount,
     syncedAt
   };
 }
@@ -293,7 +318,7 @@ function getWorkOrderSyncStatus() {
   return (
     db
       .prepare(`
-        SELECT *
+        SELECT *eh 
         FROM sync_status
         WHERE sync_key = 'work_orders'
       `)
