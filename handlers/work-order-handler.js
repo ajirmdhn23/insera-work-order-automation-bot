@@ -1,4 +1,6 @@
-const { findUserByTelegramId } = require("../database/user-repository");
+const {
+  findUserByTelegramId
+} = require("../database/user-repository");
 
 const {
   getAllWorkOrders,
@@ -9,6 +11,7 @@ const {
 } = require("../services/work-order-service");
 
 const {
+  getWorkOrderPageInfo,
   buildWorkOrderReport,
   buildWorkOrderDetail
 } = require("../services/report-service");
@@ -82,7 +85,52 @@ function getServiceAreaNameByWorkZone(workZone) {
   return "Wilayah tidak diketahui";
 }
 
-function reportKeyboard(serviceAreaCode, page, totalPages) {
+function getDetailKeyboard(serviceAreaCode, page) {
+  const buttons = [];
+
+  if (serviceAreaCode) {
+    buttons.push([
+      {
+        text: "⬅️ Kembali ke Laporan",
+        callback_data: `WO_PAGE:${serviceAreaCode}:${page || 1}`
+      }
+    ]);
+  }
+
+  buttons.push([
+    {
+      text: "📍 Pilih Wilayah",
+      callback_data: "MENU_WORK_ORDER"
+    }
+  ]);
+
+  buttons.push([
+    {
+      text: "🏠 Menu Utama",
+      callback_data: "BACK_TO_MAIN_MENU"
+    }
+  ]);
+
+  return {
+    inline_keyboard: buttons
+  };
+}
+
+function reportKeyboard(
+  serviceAreaCode,
+  page,
+  totalPages,
+  displayedWorkOrders
+) {
+  const workOrderButtons = (displayedWorkOrders || []).map(
+    (workOrder) => [
+      {
+        text: `🔎 ${workOrder.woNumber}`,
+        callback_data: `WO_DETAIL:${serviceAreaCode}:${page}:${workOrder.woNumber}`
+      }
+    ]
+  );
+
   const navigationButtons = [];
 
   if (page > 1) {
@@ -106,6 +154,7 @@ function reportKeyboard(serviceAreaCode, page, totalPages) {
 
   return {
     inline_keyboard: [
+      ...workOrderButtons,
       ...(totalPages > 1 ? [navigationButtons] : []),
       [
         {
@@ -183,11 +232,18 @@ function getReportData(serviceAreaCode, requestedPage = 1) {
     totalPages
   );
 
+  const pageInfo = getWorkOrderPageInfo(
+    workOrders,
+    page,
+    WORK_ORDERS_PER_PAGE
+  );
+
   return {
     serviceArea,
     workOrders,
     page,
-    totalPages
+    totalPages,
+    displayedWorkOrders: pageInfo.displayedWorkOrders
   };
 }
 
@@ -319,7 +375,8 @@ async function showWorkOrderReport(
     serviceArea,
     workOrders,
     page,
-    totalPages
+    totalPages,
+    displayedWorkOrders
   } = reportData;
 
   const message = buildWorkOrderReport(
@@ -335,7 +392,8 @@ async function showWorkOrderReport(
     reply_markup: reportKeyboard(
       serviceAreaCode,
       page,
-      totalPages
+      totalPages,
+      displayedWorkOrders
     )
   };
 
@@ -344,6 +402,18 @@ async function showWorkOrderReport(
   }
 
   return ctx.reply(message, extra);
+}
+
+function buildWorkOrderDetailMessage(workOrder) {
+  const serviceAreaName = getServiceAreaNameByWorkZone(
+    workOrder.workZone
+  );
+
+  return buildWorkOrderDetail(
+    workOrder,
+    serviceAreaName,
+    getLastSyncedAt([workOrder])
+  );
 }
 
 function registerWorkOrderHandler(bot) {
@@ -472,6 +542,40 @@ function registerWorkOrderHandler(bot) {
     );
   });
 
+  bot.action(
+    /^WO_DETAIL:([A-Z_]+):(\d+):(.+)$/,
+    async (ctx) => {
+      const user = requireRegisteredUser(ctx);
+
+      if (!user) {
+        return ctx.answerCbQuery();
+      }
+
+      const [, serviceAreaCode, page, woNumber] = ctx.match;
+      const workOrder = findWorkOrderByNumber(woNumber);
+
+      if (!workOrder) {
+        return ctx.answerCbQuery(
+          "Work Order tidak ditemukan. Silakan refresh data.",
+          { show_alert: true }
+        );
+      }
+
+      await ctx.answerCbQuery("Membuka detail Work Order...");
+
+      return ctx.editMessageText(
+        buildWorkOrderDetailMessage(workOrder),
+        {
+          parse_mode: "HTML",
+          reply_markup: getDetailKeyboard(
+            serviceAreaCode,
+            Number(page)
+          )
+        }
+      );
+    }
+  );
+
   bot.action("WO_PAGE_INFO", async (ctx) => {
     await ctx.answerCbQuery(
       "Gunakan tombol Sebelumnya atau Berikutnya."
@@ -500,7 +604,7 @@ Format:
 <code>/wo NOMOR_WO</code>
 
 Contoh:
-<code>/wo WO064XXXXXX</code>`,
+<code>/wo W0064783278</code>`,
         {
           parse_mode: "HTML"
         }
@@ -520,34 +624,11 @@ Buka menu <b>📋 Laporan Work Order</b> untuk melihat nomor Work Order yang ter
       );
     }
 
-    const serviceAreaName = getServiceAreaNameByWorkZone(
-      workOrder.workZone
-    );
-
     return ctx.reply(
-      buildWorkOrderDetail(
-        workOrder,
-        serviceAreaName,
-        getLastSyncedAt([workOrder])
-      ),
+      buildWorkOrderDetailMessage(workOrder),
       {
         parse_mode: "HTML",
-        reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: "📍 Pilih Wilayah",
-                callback_data: "MENU_WORK_ORDER"
-              }
-            ],
-            [
-              {
-                text: "🏠 Menu Utama",
-                callback_data: "BACK_TO_MAIN_MENU"
-              }
-            ]
-          ]
-        }
+        reply_markup: getDetailKeyboard()
       }
     );
   });

@@ -54,6 +54,37 @@ function mapWorkOrderToSnapshot(workOrder, snapshotAt) {
   };
 }
 
+function removeDuplicateSnapshots(snapshots) {
+  const uniqueSnapshots = new Map();
+
+  for (const snapshot of snapshots) {
+    uniqueSnapshots.set(snapshot.woNumber, snapshot);
+  }
+
+  return [...uniqueSnapshots.values()];
+}
+
+function buildStartworkSnapshotList(
+  workOrders,
+  snapshotAt = new Date().toISOString()
+) {
+  const mappedSnapshots = (workOrders || [])
+    .filter(isStartwork)
+    .map((workOrder) => mapWorkOrderToSnapshot(workOrder, snapshotAt))
+    .filter((workOrder) => workOrder.woNumber);
+
+  const uniqueSnapshots = removeDuplicateSnapshots(mappedSnapshots);
+  const duplicateCount = mappedSnapshots.length - uniqueSnapshots.length;
+
+  if (duplicateCount > 0) {
+    console.warn(
+      `[startwork-snapshot] ${duplicateCount} STARTWORK duplikat dari API diabaikan.`
+    );
+  }
+
+  return uniqueSnapshots;
+}
+
 function getStartworkSnapshotMap() {
   ensureStartworkSnapshotTable();
 
@@ -106,15 +137,18 @@ function buildComparableSnapshot(snapshot) {
   });
 }
 
-function detectStartworkChanges(workOrders, snapshotAt = new Date().toISOString()) {
+function detectStartworkChanges(
+  workOrders,
+  snapshotAt = new Date().toISOString()
+) {
   ensureStartworkSnapshotTable();
 
   const previousSnapshots = getStartworkSnapshotMap();
 
-  const currentStartwork = (workOrders || [])
-    .filter(isStartwork)
-    .map((workOrder) => mapWorkOrderToSnapshot(workOrder, snapshotAt))
-    .filter((workOrder) => workOrder.woNumber);
+  const currentStartwork = buildStartworkSnapshotList(
+    workOrders,
+    snapshotAt
+  );
 
   const currentSnapshotMap = new Map(
     currentStartwork.map((workOrder) => [
@@ -166,10 +200,10 @@ function replaceStartworkSnapshot(
 ) {
   ensureStartworkSnapshotTable();
 
-  const currentStartwork = (workOrders || [])
-    .filter(isStartwork)
-    .map((workOrder) => mapWorkOrderToSnapshot(workOrder, snapshotAt))
-    .filter((workOrder) => workOrder.woNumber);
+  const currentStartwork = buildStartworkSnapshotList(
+    workOrders,
+    snapshotAt
+  );
 
   const insertSnapshot = db.prepare(`
     INSERT INTO startwork_snapshots (

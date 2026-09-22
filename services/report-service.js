@@ -67,8 +67,7 @@ function buildWorkOrderReport(
 
 ℹ️ Tidak ada data Work Order untuk wilayah ini.
 
-🔄 Jadwal pembaruan: setiap 1 jam
-🕒 Sinkronisasi terakhir: ${formatDateWib(lastSyncedAt)}`;
+🕒 Data terakhir diperbarui: ${formatDateWib(lastSyncedAt)}`;
   }
 
   const {
@@ -84,9 +83,13 @@ function buildWorkOrderReport(
 
   const workOrderLines = displayedWorkOrders
     .map((workOrder, index) => {
-      return `${startIndex + index + 1}. <code>${escapeHtml(workOrder.woNumber)}</code> | <b>${escapeHtml(workOrder.status)}</b>
-   ${escapeHtml(workOrder.description)}
-   Zona: ${escapeHtml(workOrder.workZone)} | Dibuat: ${formatDateWib(workOrder.createdAt)}`;
+      return `${startIndex + index + 1}. <code>${escapeHtml(
+        workOrder.woNumber
+      )}</code> | <b>${escapeHtml(workOrder.status)}</b>
+📦 ${escapeHtml(workOrder.description)}
+📍 Zona: ${escapeHtml(workOrder.workZone)} | Dibuat: ${formatDateWib(
+        workOrder.createdAt
+      )}`;
     })
     .join("\n\n");
 
@@ -98,42 +101,34 @@ function buildWorkOrderReport(
 
 📍 Wilayah: <b>${escapeHtml(serviceAreaName)}</b>
 📊 Total Work Order: <b>${workOrders.length}</b>
-🔄 Jadwal pembaruan: setiap 1 jam
 🕒 Data terakhir diperbarui: <b>${formatDateWib(lastSyncedAt)}</b>
 
 ━━━━━━━━━━━━━━━━━━━━
 
 ${workOrderLines}
 
-<i>Menampilkan ${firstItem}–${lastItem} dari ${workOrders.length} Work Order • Halaman ${currentPage}/${totalPages}</i>
+<i>Menampilkan ${firstItem}–${lastItem} dari ${
+    workOrders.length
+  } Work Order • Halaman ${currentPage}/${totalPages}</i>
 
 ━━━━━━━━━━━━━━━━━━━━
-🔎 <b>Melihat detail Work Order</b>
-
-Ketik:
-<code>/wo NOMOR_WO</code>
-
-Contoh format:
-<code>/wo WO064XXXXXX</code>
-
-Salin salah satu nomor WO dari daftar di atas, lalu tempel setelah <code>/wo</code>.`;
+🔎 Pilih nomor Work Order pada tombol di bawah untuk melihat detail.`;
 }
 
 function buildWorkOrderDetail(workOrder, serviceAreaName, lastSyncedAt) {
   if (!workOrder) {
     return `⚠️ <b>Work Order tidak ditemukan.</b>
 
-Gunakan format:
-<code>/wo NOMOR_WO</code>
-
-Buka menu <b>📋 Laporan Work Order</b> untuk melihat nomor WO yang tersedia.`;
+Buka menu <b>📋 Laporan Work Order</b> untuk melihat data yang tersedia.`;
   }
 
   return `🔎 <b>Detail Work Order</b>
 ━━━━━━━━━━━━━━━━━━━━
 
 🆔 Nomor WO: <code>${escapeHtml(workOrder.woNumber)}</code>
-📍 Wilayah: <b>${escapeHtml(serviceAreaName || workOrder.locationName)}</b>
+📍 Wilayah: <b>${escapeHtml(
+    serviceAreaName || workOrder.locationName
+  )}</b>
 🗺️ Work Zone: <b>${escapeHtml(workOrder.workZone)}</b>
 
 📌 Status: <b>${escapeHtml(workOrder.status)}</b>
@@ -151,8 +146,9 @@ Buka menu <b>📋 Laporan Work Order</b> untuk melihat nomor WO yang tersedia.`;
 🗓️ Booking Date: ${formatDateWib(workOrder.bookingDate)}
 
 ━━━━━━━━━━━━━━━━━━━━
-🔄 Jadwal pembaruan: setiap 1 jam
-🕒 Data terakhir diperbarui: <b>${formatDateWib(lastSyncedAt || workOrder.syncedAt)}</b>`;
+🕒 Data terakhir diperbarui: <b>${formatDateWib(
+    lastSyncedAt || workOrder.syncedAt
+  )}</b>`;
 }
 
 module.exports = {
