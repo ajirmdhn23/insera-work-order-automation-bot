@@ -1,6 +1,7 @@
 const { db } = require("./connection");
 
-const SYNC_INTERVAL_SETTING_KEY = "work_order_sync_interval_minutes";
+const SYNC_INTERVAL_SETTING_KEY =
+  "work_order_sync_interval_minutes";
 
 function normalizeText(value) {
   return String(value ?? "").trim();
@@ -8,6 +9,7 @@ function normalizeText(value) {
 
 function toNullableText(value) {
   const text = normalizeText(value);
+
   return text || null;
 }
 
@@ -62,13 +64,20 @@ function saveSetting(settingKey, settingValue) {
 }
 
 function getSavedWorkOrderSyncInterval() {
-  const value = Number(getSetting(SYNC_INTERVAL_SETTING_KEY));
+  const value = Number(
+    getSetting(SYNC_INTERVAL_SETTING_KEY)
+  );
 
-  return Number.isFinite(value) && value > 0 ? value : null;
+  return Number.isFinite(value) && value > 0
+    ? value
+    : null;
 }
 
 function saveWorkOrderSyncInterval(intervalMinutes) {
-  saveSetting(SYNC_INTERVAL_SETTING_KEY, Number(intervalMinutes));
+  saveSetting(
+    SYNC_INTERVAL_SETTING_KEY,
+    Number(intervalMinutes)
+  );
 }
 
 function mapDatabaseRowToWorkOrder(row) {
@@ -80,18 +89,45 @@ function mapDatabaseRowToWorkOrder(row) {
     woNumber: row.wo_number,
     locationCode: row.location_code,
     locationName: row.location_name,
+
+    createdAt: row.created_at,
+    modifiedAt: row.modified_at,
+    scOrderNumber: row.sc_order_number,
+    ossOrderId: row.oss_order_id,
+    serviceNumber: row.service_number,
+
     status: row.status,
     description: row.description,
     ownerGroup: row.owner_group,
-    workZone: row.work_zone,
     productName: row.product_name,
-    productType: row.product_type,
     crmOrderType: row.crm_order_type,
-    createdAt: row.created_at,
-    modifiedAt: row.modified_at,
+
+    workZone: row.work_zone,
+    area: row.area_tif,
+    regional: row.regional_tif,
+    district: row.district_tif,
+    regionSiteId: row.region_site_id,
+
+    customerName: row.customer_name,
+    address: row.service_address,
+    witel: row.witel,
+
     statusDate: row.status_date,
     schedstart: row.schedstart,
+    contactNumber: row.contact_number,
+
+    measurement: row.measurement,
+    measurementDate: row.measurement_date,
+    measurementResult: row.measurement_result,
+
+    woClass: row.wo_class,
+    contractNumber: row.contract_number,
+    productType: row.product_type,
     bookingDate: row.booking_date,
+
+    channelIdTsel: row.channel_id_tsel,
+    orderIdTsel: row.order_id_tsel,
+
     syncedAt: row.synced_at
   };
 }
@@ -99,21 +135,74 @@ function mapDatabaseRowToWorkOrder(row) {
 function prepareWorkOrder(workOrder, syncedAt) {
   return {
     woNumber: normalizeText(workOrder.woNumber),
-    locationCode: toNullableText(workOrder.locationCode) || "UNKNOWN",
+
+    locationCode:
+      toNullableText(workOrder.locationCode) || "UNKNOWN",
+
     locationName:
-      toNullableText(workOrder.locationName) || "Tidak diketahui",
+      toNullableText(workOrder.locationName) ||
+      "Tidak diketahui",
+
+    createdAt: toNullableText(workOrder.createdAt),
+    modifiedAt: toNullableText(workOrder.modifiedAt),
+    scOrderNumber: toNullableText(
+      workOrder.scOrderNumber
+    ),
+    ossOrderId: toNullableText(workOrder.ossOrderId),
+    serviceNumber: toNullableText(
+      workOrder.serviceNumber
+    ),
+
     status: toNullableText(workOrder.status),
     description: toNullableText(workOrder.description),
     ownerGroup: toNullableText(workOrder.ownerGroup),
-    workZone: toNullableText(workOrder.workZone),
     productName: toNullableText(workOrder.productName),
-    productType: toNullableText(workOrder.productType),
-    crmOrderType: toNullableText(workOrder.crmOrderType),
-    createdAt: toNullableText(workOrder.createdAt),
-    modifiedAt: toNullableText(workOrder.modifiedAt),
+    crmOrderType: toNullableText(
+      workOrder.crmOrderType
+    ),
+
+    workZone: toNullableText(workOrder.workZone),
+    area: toNullableText(workOrder.area),
+    regional: toNullableText(workOrder.regional),
+    district: toNullableText(workOrder.district),
+    regionSiteId: toNullableText(
+      workOrder.regionSiteId
+    ),
+
+    customerName: toNullableText(
+      workOrder.customerName
+    ),
+    address: toNullableText(workOrder.address),
+    witel: toNullableText(workOrder.witel),
+
     statusDate: toNullableText(workOrder.statusDate),
     schedstart: toNullableText(workOrder.schedstart),
+    contactNumber: toNullableText(
+      workOrder.contactNumber
+    ),
+
+    measurement: toNullableText(workOrder.measurement),
+    measurementDate: toNullableText(
+      workOrder.measurementDate
+    ),
+    measurementResult: toNullableText(
+      workOrder.measurementResult
+    ),
+
+    woClass: toNullableText(workOrder.woClass),
+    contractNumber: toNullableText(
+      workOrder.contractNumber
+    ),
+    productType: toNullableText(workOrder.productType),
     bookingDate: toNullableText(workOrder.bookingDate),
+
+    channelIdTsel: toNullableText(
+      workOrder.channelIdTsel
+    ),
+    orderIdTsel: toNullableText(
+      workOrder.orderIdTsel
+    ),
+
     syncedAt
   };
 }
@@ -128,7 +217,10 @@ function removeDuplicateWorkOrders(workOrders) {
   return [...uniqueWorkOrders.values()];
 }
 
-function saveWorkOrders(workOrders, syncedAt = new Date().toISOString()) {
+function saveWorkOrders(
+  workOrders,
+  syncedAt = new Date().toISOString()
+) {
   const normalizedWorkOrders = (workOrders || [])
     .map((workOrder) => prepareWorkOrder(workOrder, syncedAt))
     .filter((workOrder) => workOrder.woNumber);
@@ -157,36 +249,90 @@ function saveWorkOrders(workOrders, syncedAt = new Date().toISOString()) {
       wo_number,
       location_code,
       location_name,
+
+      created_at,
+      modified_at,
+      sc_order_number,
+      oss_order_id,
+      service_number,
+
       status,
       description,
       owner_group,
-      work_zone,
       product_name,
-      product_type,
       crm_order_type,
-      created_at,
-      modified_at,
+
+      work_zone,
+      area_tif,
+      regional_tif,
+      district_tif,
+      region_site_id,
+
+      customer_name,
+      service_address,
+      witel,
+
       status_date,
       schedstart,
+      contact_number,
+
+      measurement,
+      measurement_date,
+      measurement_result,
+
+      wo_class,
+      contract_number,
+      product_type,
       booking_date,
+
+      channel_id_tsel,
+      order_id_tsel,
+
       synced_at
     )
     VALUES (
       @woNumber,
       @locationCode,
       @locationName,
+
+      @createdAt,
+      @modifiedAt,
+      @scOrderNumber,
+      @ossOrderId,
+      @serviceNumber,
+
       @status,
       @description,
       @ownerGroup,
-      @workZone,
       @productName,
-      @productType,
       @crmOrderType,
-      @createdAt,
-      @modifiedAt,
+
+      @workZone,
+      @area,
+      @regional,
+      @district,
+      @regionSiteId,
+
+      @customerName,
+      @address,
+      @witel,
+
       @statusDate,
       @schedstart,
+      @contactNumber,
+
+      @measurement,
+      @measurementDate,
+      @measurementResult,
+
+      @woClass,
+      @contractNumber,
+      @productType,
       @bookingDate,
+
+      @channelIdTsel,
+      @orderIdTsel,
+
       @syncedAt
     )
   `);
@@ -242,7 +388,9 @@ function getSavedWorkOrdersByWorkZones(workZones) {
     return [];
   }
 
-  const placeholders = normalizedWorkZones.map(() => "?").join(", ");
+  const placeholders = normalizedWorkZones
+    .map(() => "?")
+    .join(", ");
 
   return db
     .prepare(`
@@ -318,7 +466,7 @@ function getWorkOrderSyncStatus() {
   return (
     db
       .prepare(`
-        SELECT *eh 
+        SELECT *
         FROM sync_status
         WHERE sync_key = 'work_orders'
       `)

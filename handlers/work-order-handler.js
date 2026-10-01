@@ -1,9 +1,4 @@
 const {
-  findUserByTelegramId
-} = require("../database/user-repository");
-
-const {
-  getAllWorkOrders,
   getWorkOrdersByServiceArea,
   findWorkOrderByNumber,
   getServiceAreaByCode,
@@ -11,40 +6,29 @@ const {
 } = require("../services/work-order-service");
 
 const {
-  getWorkOrderPageInfo,
-  buildWorkOrderReport,
   buildWorkOrderDetail
 } = require("../services/report-service");
 
 const {
-  formatTanggalIndonesia,
-  formatWaktuWib
-} = require("../utils/date");
+  getPersonalSubscription
+} = require("../database/subscription-repository");
 
 const WORK_ORDERS_PER_PAGE = 10;
-
-function requireRegisteredUser(ctx) {
-  const user = findUserByTelegramId(ctx.from.id);
-
-  if (!user) {
-    ctx.reply(
-      "⚠️ Kamu belum terdaftar. Ketik /start untuk melakukan registrasi."
-    );
-
-    return null;
-  }
-
-  return user;
-}
 
 function normalizeText(value) {
   return String(value || "").trim().toUpperCase();
 }
 
+function getChatId(ctx) {
+  return ctx.chat?.id || ctx.callbackQuery?.message?.chat?.id || null;
+}
+
 function extractWorkOrderNumber(ctx) {
   const messageText = String(ctx.message?.text || "").trim();
 
-  const match = messageText.match(/^\/wo(?:@\w+)?\s+(.+)$/i);
+  const match = messageText.match(
+    /^\/startwork(?:@\w+)?\s+(.+)$/i
+  );
 
   if (!match) {
     return null;
@@ -53,202 +37,87 @@ function extractWorkOrderNumber(ctx) {
   return match[1].trim().toUpperCase();
 }
 
-function getServiceAreaNameByWorkZone(workZone) {
-  const serviceAreaCodes = [
-    "SA_BTU",
-    "SA_BLB",
-    "SA_KLJ",
-    "SA_KEP",
-    "SA_TUR",
-    "SA_MLG",
-    "SA_SWJ",
-    "SA_BLR",
-    "SA_TUL"
-  ];
-
-  const normalizedWorkZone = String(workZone || "")
-    .trim()
-    .toUpperCase();
-
-  for (const serviceAreaCode of serviceAreaCodes) {
-    const serviceArea = getServiceAreaByCode(serviceAreaCode);
-
-    if (
-      serviceArea &&
-      Array.isArray(serviceArea.workZones) &&
-      serviceArea.workZones.includes(normalizedWorkZone)
-    ) {
-      return serviceArea.name;
-    }
+function formatDateTime(value) {
+  if (!value) {
+    return "-";
   }
 
-  return "Wilayah tidak diketahui";
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  const pad = (number) => String(number).padStart(2, "0");
+
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate())
+  ].join("-") + ` ${pad(date.getHours())}:${pad(
+    date.getMinutes()
+  )}:${pad(date.getSeconds())}`;
 }
 
-function getDetailKeyboard(serviceAreaCode, page) {
-  const buttons = [];
+function formatLastUpdated(value) {
+  return value ? formatDateTime(value) : "Belum tersedia";
+}
 
-  if (serviceAreaCode) {
-    buttons.push([
-      {
-        text: "⬅️ Kembali ke Laporan",
-        callback_data: `WO_PAGE:${serviceAreaCode}:${page || 1}`
-      }
-    ]);
+function reportKeyboard(serviceAreaCode, page, totalPages) {
+  const rows = [];
+
+  if (totalPages > 1) {
+    const navigation = [];
+
+    if (page > 1) {
+      navigation.push({
+        text: "⬅️ Sebelumnya",
+        callback_data: `PERSONAL_STARTWORK_PAGE:${serviceAreaCode}:${page - 1}`
+      });
+    }
+
+    navigation.push({
+      text: `${page}/${totalPages}`,
+      callback_data: "PERSONAL_PAGE_INFO"
+    });
+
+    if (page < totalPages) {
+      navigation.push({
+        text: "Berikutnya ➡️",
+        callback_data: `PERSONAL_STARTWORK_PAGE:${serviceAreaCode}:${page + 1}`
+      });
+    }
+
+    rows.push(navigation);
   }
 
-  buttons.push([
+  rows.push([
     {
-      text: "📍 Pilih Wilayah",
-      callback_data: "MENU_WORK_ORDER"
+      text: "⏰ Atur Interval",
+      callback_data: "PERSONAL_INTERVAL_MENU"
     }
   ]);
 
-  buttons.push([
+  rows.push([
     {
-      text: "🏠 Menu Utama",
-      callback_data: "BACK_TO_MAIN_MENU"
+      text: "📍 Ganti Service Area",
+      callback_data: "PERSONAL_CHANGE_AREA"
     }
   ]);
 
   return {
-    inline_keyboard: buttons
+    inline_keyboard: rows
   };
 }
 
-function reportKeyboard(
-  serviceAreaCode,
-  page,
-  totalPages,
-  displayedWorkOrders
-) {
-  const workOrderButtons = (displayedWorkOrders || []).map(
-    (workOrder) => [
-      {
-        text: `🔎 ${workOrder.woNumber}`,
-        callback_data: `WO_DETAIL:${serviceAreaCode}:${page}:${workOrder.woNumber}`
-      }
-    ]
-  );
-
-  const navigationButtons = [];
-
-  if (page > 1) {
-    navigationButtons.push({
-      text: "⬅️ Sebelumnya",
-      callback_data: `WO_PAGE:${serviceAreaCode}:${page - 1}`
-    });
-  }
-
-  navigationButtons.push({
-    text: `${page}/${totalPages}`,
-    callback_data: "WO_PAGE_INFO"
-  });
-
-  if (page < totalPages) {
-    navigationButtons.push({
-      text: "Berikutnya ➡️",
-      callback_data: `WO_PAGE:${serviceAreaCode}:${page + 1}`
-    });
-  }
-
-  return {
-    inline_keyboard: [
-      ...workOrderButtons,
-      ...(totalPages > 1 ? [navigationButtons] : []),
-      [
-        {
-          text: "📍 Pilih Wilayah Lain",
-          callback_data: "MENU_WORK_ORDER"
-        }
-      ],
-      [
-        {
-          text: "🏠 Menu Utama",
-          callback_data: "BACK_TO_MAIN_MENU"
-        }
-      ]
-    ]
-  };
-}
-
-function startworkReportKeyboard(page, totalPages) {
-  const navigationButtons = [];
-
-  if (page > 1) {
-    navigationButtons.push({
-      text: "⬅️ Sebelumnya",
-      callback_data: `SC_PAGE:${page - 1}`
-    });
-  }
-
-  navigationButtons.push({
-    text: `${page}/${totalPages}`,
-    callback_data: "SC_PAGE_INFO"
-  });
-
-  if (page < totalPages) {
-    navigationButtons.push({
-      text: "Berikutnya ➡️",
-      callback_data: `SC_PAGE:${page + 1}`
-    });
-  }
-
-  return {
-    inline_keyboard: [
-      ...(totalPages > 1 ? [navigationButtons] : []),
-      [
-        {
-          text: "📍 Laporan Semua Work Order",
-          callback_data: "MENU_WORK_ORDER"
-        }
-      ],
-      [
-        {
-          text: "🏠 Menu Utama",
-          callback_data: "BACK_TO_MAIN_MENU"
-        }
-      ]
-    ]
-  };
-}
-
-function getReportData(serviceAreaCode, requestedPage = 1) {
+function getPersonalStartworkData(serviceAreaCode, requestedPage = 1) {
   const serviceArea = getServiceAreaByCode(serviceAreaCode);
 
   if (!serviceArea) {
     return null;
   }
 
-  const workOrders = getWorkOrdersByServiceArea(serviceAreaCode);
-
-  const totalPages = Math.max(
-    1,
-    Math.ceil(workOrders.length / WORK_ORDERS_PER_PAGE)
-  );
-
-  const page = Math.min(
-    Math.max(Number(requestedPage) || 1, 1),
-    totalPages
-  );
-
-  const pageInfo = getWorkOrderPageInfo(
-    workOrders,
-    page,
-    WORK_ORDERS_PER_PAGE
-  );
-
-  return {
-    serviceArea,
-    workOrders,
-    page,
-    totalPages,
-    displayedWorkOrders: pageInfo.displayedWorkOrders
-  };
-}
-
-function getStartworkReportData(requestedPage = 1) {
-  const workOrders = getAllWorkOrders().filter(
+  const workOrders = getWorkOrdersByServiceArea(serviceAreaCode).filter(
     (workOrder) => normalizeText(workOrder.status) === "STARTWORK"
   );
 
@@ -262,138 +131,101 @@ function getStartworkReportData(requestedPage = 1) {
     totalPages
   );
 
+  const startIndex = (page - 1) * WORK_ORDERS_PER_PAGE;
+
   return {
+    serviceArea,
     workOrders,
     page,
-    totalPages
+    totalPages,
+    displayedWorkOrders: workOrders.slice(
+      startIndex,
+      startIndex + WORK_ORDERS_PER_PAGE
+    )
   };
 }
 
-function formatLastUpdated(lastSyncedAt) {
-  if (!lastSyncedAt) {
-    return "Belum tersedia";
-  }
+function buildPersonalStartworkReport(reportData) {
+  const {
+    serviceArea,
+    workOrders,
+    page,
+    displayedWorkOrders
+  } = reportData;
 
-  const syncDate = new Date(lastSyncedAt);
-
-  if (Number.isNaN(syncDate.getTime())) {
-    return "Belum tersedia";
-  }
-
-  return `${formatTanggalIndonesia(syncDate)} ${formatWaktuWib(
-    syncDate
-  )} WIB`;
-}
-
-function buildStartworkReport(workOrders, lastSyncedAt, page) {
-  const lastUpdatedLabel = formatLastUpdated(lastSyncedAt);
+  const lastSyncedAt = getLastSyncedAt(workOrders);
 
   if (workOrders.length === 0) {
-    return `📊 <b>Laporan STARTWORK</b>
+    return `📋 <b>Laporan STARTWORK — ${serviceArea.name}</b>
 
-Tidak ada Work Order dengan status <b>STARTWORK</b> saat ini.
+Tidak ada Work Order berstatus <b>STARTWORK</b> saat ini.
 
-🔄 Data terakhir diperbarui: <b>${lastUpdatedLabel}</b>`;
+🔄 Data terakhir diperbarui: <b>${formatLastUpdated(
+    lastSyncedAt
+  )}</b>
+
+Detail WO:
+<code>/startwork NOMOR_WO</code>`;
   }
 
   const startIndex = (page - 1) * WORK_ORDERS_PER_PAGE;
 
-  const pageWorkOrders = workOrders.slice(
-    startIndex,
-    startIndex + WORK_ORDERS_PER_PAGE
-  );
-
-  const rows = pageWorkOrders.map((workOrder, index) => {
+  const rows = displayedWorkOrders.map((workOrder, index) => {
     const number = startIndex + index + 1;
 
-    const serviceAreaName = getServiceAreaNameByWorkZone(
-      workOrder.workZone
-    );
-
-    return `${number}. <code>${workOrder.woNumber}</code>
-📍 ${serviceAreaName} • Zona: ${workOrder.workZone || "-"}
-🏷️ ${workOrder.description || "Tanpa deskripsi"}`;
+    return `${number}. <code>${workOrder.woNumber || "-"}</code>
+📅 ${formatDateTime(workOrder.createdAt)}
+🔗 -
+📊 Status: ${workOrder.status || "-"}
+🗓️ Booking Date: ${formatDateTime(workOrder.bookingDate)}`;
   });
 
-  return `📊 <b>Laporan STARTWORK</b>
+  return `📋 <b>Laporan STARTWORK — ${serviceArea.name}</b>
 
 Total STARTWORK: <b>${workOrders.length}</b>
-🔄 Data terakhir diperbarui: <b>${lastUpdatedLabel}</b>
+🔄 Data terakhir diperbarui: <b>${formatLastUpdated(
+    lastSyncedAt
+  )}</b>
 
 ${rows.join("\n\n")}
 
 <i>Menampilkan ${startIndex + 1}–${
-    startIndex + pageWorkOrders.length
-  } dari ${workOrders.length} Work Order STARTWORK.</i>
+    startIndex + displayedWorkOrders.length
+  } dari ${workOrders.length} Work Order.</i>
 
-🔎 Ketik <code>/wo NOMOR_WO</code> untuk melihat detail.`;
+Detail WO:
+<code>/startwork NOMOR_WO</code>`;
 }
 
-async function showStartworkReport(
-  ctx,
-  requestedPage = 1,
-  editMessage = false
-) {
-  const { workOrders, page, totalPages } = getStartworkReportData(
-    requestedPage
-  );
-
-  const message = buildStartworkReport(
-    workOrders,
-    getLastSyncedAt(workOrders),
-    page
-  );
-
-  const extra = {
-    parse_mode: "HTML",
-    reply_markup: startworkReportKeyboard(page, totalPages)
-  };
-
-  if (editMessage) {
-    return ctx.editMessageText(message, extra);
-  }
-
-  return ctx.reply(message, extra);
-}
-
-async function showWorkOrderReport(
+async function showPersonalStartworkReport(
   ctx,
   serviceAreaCode,
   requestedPage = 1,
   editMessage = false
 ) {
-  const reportData = getReportData(
+  const reportData = getPersonalStartworkData(
     serviceAreaCode,
     requestedPage
   );
 
   if (!reportData) {
-    return ctx.reply("⚠️ Wilayah tidak ditemukan.");
+    const message = "⚠️ Service Area tidak ditemukan.";
+
+    if (editMessage) {
+      return ctx.editMessageText(message);
+    }
+
+    return ctx.reply(message);
   }
 
-  const {
-    serviceArea,
-    workOrders,
-    page,
-    totalPages,
-    displayedWorkOrders
-  } = reportData;
-
-  const message = buildWorkOrderReport(
-    workOrders,
-    serviceArea.name,
-    getLastSyncedAt(workOrders),
-    page,
-    WORK_ORDERS_PER_PAGE
-  );
+  const message = buildPersonalStartworkReport(reportData);
 
   const extra = {
     parse_mode: "HTML",
     reply_markup: reportKeyboard(
       serviceAreaCode,
-      page,
-      totalPages,
-      displayedWorkOrders
+      reportData.page,
+      reportData.totalPages
     )
   };
 
@@ -404,194 +236,64 @@ async function showWorkOrderReport(
   return ctx.reply(message, extra);
 }
 
-function buildWorkOrderDetailMessage(workOrder) {
-  const serviceAreaName = getServiceAreaNameByWorkZone(
-    workOrder.workZone
-  );
+function isWorkOrderInServiceArea(workOrder, serviceAreaCode) {
+  const serviceArea = getServiceAreaByCode(serviceAreaCode);
 
-  return buildWorkOrderDetail(
-    workOrder,
-    serviceAreaName,
-    getLastSyncedAt([workOrder])
+  return Boolean(
+    serviceArea &&
+      workOrder &&
+      serviceArea.workZones.includes(
+        normalizeText(workOrder.workZone)
+      )
   );
 }
 
 function registerWorkOrderHandler(bot) {
-  bot.command("report", (ctx) => {
-    const user = requireRegisteredUser(ctx);
-
-    if (!user) {
-      return;
-    }
-
-    const workOrders = getAllWorkOrders();
-
-    return ctx.reply(
-      buildWorkOrderReport(
-        workOrders,
-        "Semua Wilayah",
-        getLastSyncedAt(workOrders),
-        1,
-        WORK_ORDERS_PER_PAGE
-      ),
-      {
-        parse_mode: "HTML",
-        reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: "📍 Pilih Wilayah",
-                callback_data: "MENU_WORK_ORDER"
-              }
-            ],
-            [
-              {
-                text: "🏠 Menu Utama",
-                callback_data: "BACK_TO_MAIN_MENU"
-              }
-            ]
-          ]
-        }
-      }
-    );
-  });
-
-  bot.command("preview", (ctx) => {
-    const user = requireRegisteredUser(ctx);
-
-    if (!user) {
-      return;
-    }
-
-    const workOrders = getAllWorkOrders();
-
-    return ctx.reply(
-      buildWorkOrderReport(
-        workOrders,
-        "Semua Wilayah",
-        getLastSyncedAt(workOrders),
-        1,
-        WORK_ORDERS_PER_PAGE
-      ),
-      {
-        parse_mode: "HTML",
-        reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: "📍 Pilih Wilayah",
-                callback_data: "MENU_WORK_ORDER"
-              }
-            ],
-            [
-              {
-                text: "🏠 Menu Utama",
-                callback_data: "BACK_TO_MAIN_MENU"
-              }
-            ]
-          ]
-        }
-      }
-    );
-  });
-
-  bot.command("sc", async (ctx) => {
-    const user = requireRegisteredUser(ctx);
-
-    if (!user) {
-      return;
-    }
-
-    return showStartworkReport(ctx);
-  });
-
-  bot.action(/^SC_PAGE:(\d+)$/, async (ctx) => {
-    const user = requireRegisteredUser(ctx);
-
-    if (!user) {
-      return ctx.answerCbQuery();
-    }
-
-    await ctx.answerCbQuery();
-
-    return showStartworkReport(ctx, Number(ctx.match[1]), true);
-  });
-
-  bot.action("SC_PAGE_INFO", async (ctx) => {
-    await ctx.answerCbQuery(
-      "Gunakan tombol Sebelumnya atau Berikutnya."
-    );
-  });
-
-  bot.action(/^WO_PAGE:([A-Z_]+):(\d+)$/, async (ctx) => {
-    const user = requireRegisteredUser(ctx);
-
-    if (!user) {
-      return ctx.answerCbQuery();
-    }
-
-    const [, serviceAreaCode, page] = ctx.match;
-
-    await ctx.answerCbQuery();
-
-    return showWorkOrderReport(
-      ctx,
-      serviceAreaCode,
-      Number(page),
-      true
-    );
-  });
-
   bot.action(
-    /^WO_DETAIL:([A-Z_]+):(\d+):(.+)$/,
+    /^PERSONAL_STARTWORK_PAGE:([A-Z_]+):(\d+)$/,
     async (ctx) => {
-      const user = requireRegisteredUser(ctx);
+      const [, serviceAreaCode, page] = ctx.match;
 
-      if (!user) {
-        return ctx.answerCbQuery();
-      }
+      const subscription = getPersonalSubscription(getChatId(ctx));
 
-      const [, serviceAreaCode, page, woNumber] = ctx.match;
-      const workOrder = findWorkOrderByNumber(woNumber);
-
-      if (!workOrder) {
+      if (!subscription) {
         return ctx.answerCbQuery(
-          "Work Order tidak ditemukan. Silakan refresh data.",
+          "Pilih Service Area terlebih dahulu dengan /start.",
           { show_alert: true }
         );
       }
 
-      await ctx.answerCbQuery("Membuka detail Work Order...");
+      if (subscription.service_area_code !== serviceAreaCode) {
+        return ctx.answerCbQuery(
+          "Kamu hanya dapat melihat Work Order wilayah yang dipilih.",
+          { show_alert: true }
+        );
+      }
 
-      return ctx.editMessageText(
-        buildWorkOrderDetailMessage(workOrder),
-        {
-          parse_mode: "HTML",
-          reply_markup: getDetailKeyboard(
-            serviceAreaCode,
-            Number(page)
-          )
-        }
+      await ctx.answerCbQuery();
+
+      return showPersonalStartworkReport(
+        ctx,
+        serviceAreaCode,
+        Number(page),
+        true
       );
     }
   );
 
-  bot.action("WO_PAGE_INFO", async (ctx) => {
-    await ctx.answerCbQuery(
+  bot.action("PERSONAL_PAGE_INFO", async (ctx) => {
+    return ctx.answerCbQuery(
       "Gunakan tombol Sebelumnya atau Berikutnya."
     );
   });
 
-  bot.command("wo", async (ctx) => {
-    console.log("[wo-command] diterima", {
-      telegramId: ctx.from?.id,
-      text: ctx.message?.text
-    });
+  bot.command("startwork", async (ctx) => {
+    const subscription = getPersonalSubscription(getChatId(ctx));
 
-    const user = requireRegisteredUser(ctx);
-
-    if (!user) {
-      return;
+    if (!subscription) {
+      return ctx.reply(
+        "Pilih Service Area terlebih dahulu dengan command /start."
+      );
     }
 
     const woNumber = extractWorkOrderNumber(ctx);
@@ -601,40 +303,44 @@ function registerWorkOrderHandler(bot) {
         `⚠️ Masukkan nomor Work Order setelah command.
 
 Format:
-<code>/wo NOMOR_WO</code>
+<code>/startwork NOMOR_WO</code>
 
 Contoh:
-<code>/wo W0064783278</code>`,
-        {
-          parse_mode: "HTML"
-        }
+<code>/startwork WO-KLJ-005</code>`,
+        { parse_mode: "HTML" }
       );
     }
 
     const workOrder = findWorkOrderByNumber(woNumber);
 
-    if (!workOrder) {
+    if (
+      !workOrder ||
+      !isWorkOrderInServiceArea(
+        workOrder,
+        subscription.service_area_code
+      ) ||
+      normalizeText(workOrder.status) !== "STARTWORK"
+    ) {
       return ctx.reply(
-        `⚠️ Nomor Work Order <code>${woNumber}</code> tidak ditemukan.
-
-Buka menu <b>📋 Laporan Work Order</b> untuk melihat nomor Work Order yang tersedia.`,
-        {
-          parse_mode: "HTML"
-        }
+        `⚠️ Work Order <code>${woNumber}</code> tidak ditemukan sebagai STARTWORK pada Service Area kamu.`,
+        { parse_mode: "HTML" }
       );
     }
 
     return ctx.reply(
-      buildWorkOrderDetailMessage(workOrder),
-      {
-        parse_mode: "HTML",
-        reply_markup: getDetailKeyboard()
-      }
+      buildWorkOrderDetail(
+        workOrder,
+        getServiceAreaByCode(
+          subscription.service_area_code
+        ).name,
+        getLastSyncedAt([workOrder])
+      ),
+      { parse_mode: "HTML" }
     );
   });
 }
 
 module.exports = {
   registerWorkOrderHandler,
-  showWorkOrderReport
+  showPersonalStartworkReport
 };

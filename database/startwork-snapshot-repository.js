@@ -245,7 +245,7 @@ function replaceStartworkSnapshot(
   const replaceSnapshot = db.transaction(() => {
     db.prepare("DELETE FROM startwork_snapshots").run();
 
-    for (const snapshot of currentStartwork) {
+    for (const snapshot of currentStartwork) {   
       insertSnapshot.run(snapshot);
     }
   });

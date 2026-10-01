@@ -39,7 +39,7 @@ const sampleDefinitions = [
   {
     prefix: "BLB",
     workZone: "BLB",
-    location: "SA Bululawang",
+    location: "SA Blimbing",
     status: "STARTWORK",
     description: "New Install",
     productName: "INDIHOME",

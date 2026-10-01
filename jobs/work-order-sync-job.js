@@ -56,7 +56,13 @@ function isAllowedInterval(intervalMinutes) {
 }
 
 function getCronExpression(intervalMinutes) {
-  return `*/${intervalMinutes} * * * *`;
+  const interval = Number(intervalMinutes);
+
+  if (interval === 60) {
+    return "0 * * * *";
+  }
+
+  return `*/${interval} * * * *`;
 }
 
 function getIntervalLabel(intervalMinutes) {
@@ -127,7 +133,9 @@ async function notifyStartworkChanges(changes, syncResult, trigger) {
 
 async function runWorkOrderSync(trigger = "scheduler") {
   if (isSyncRunning) {
-    console.log("[work-order-sync] dilewati: sync sebelumnya masih berjalan.");
+    console.log(
+      "[work-order-sync] dilewati: sync sebelumnya masih berjalan."
+    );
 
     return {
       skipped: true,
@@ -147,7 +155,9 @@ async function runWorkOrderSync(trigger = "scheduler") {
   };
 
   try {
-    console.log(`[work-order-sync] mengambil data Insera (${trigger})...`);
+    console.log(
+      `[work-order-sync] mengambil data Insera (${trigger})...`
+    );
 
     const result = await syncWorkOrdersFromInsera();
 
@@ -206,6 +216,18 @@ async function runWorkOrderSync(trigger = "scheduler") {
   }
 }
 
+function stopWorkOrderScheduler() {
+  if (!syncTask) {
+    return;
+  }
+
+  syncTask.stop();
+  syncTask.destroy();
+  syncTask = null;
+
+  console.log("[work-order-sync] scheduler sebelumnya dihentikan.");
+}
+
 function scheduleWorkOrderSync(intervalMinutes) {
   const interval = Number(intervalMinutes);
 
@@ -215,10 +237,7 @@ function scheduleWorkOrderSync(intervalMinutes) {
     );
   }
 
-  if (syncTask) {
-    syncTask.stop();
-    syncTask.destroy();
-  }
+  stopWorkOrderScheduler();
 
   const cronExpression = getCronExpression(interval);
 
@@ -228,7 +247,10 @@ function scheduleWorkOrderSync(intervalMinutes) {
       try {
         await runWorkOrderSync("scheduler");
       } catch (error) {
-        console.error("[work-order-sync-scheduler-error]", error.message);
+        console.error(
+          "[work-order-sync-scheduler-error]",
+          error.message
+        );
       }
     },
     {
@@ -238,7 +260,10 @@ function scheduleWorkOrderSync(intervalMinutes) {
     }
   );
 
-  syncStatus.intervalMinutes = interval;
+  syncStatus = {
+    ...syncStatus,
+    intervalMinutes: interval
+  };
 
   console.log(
     `[work-order-sync] scheduler diatur: ${getIntervalLabel(interval)}.`
@@ -256,9 +281,20 @@ function startWorkOrderSyncJob() {
 
   scheduleWorkOrderSync(initialInterval);
 
+  console.log(
+    `[work-order-sync] sinkronisasi awal dijalankan; scheduler aktif ${getIntervalLabel(
+      initialInterval
+    )}.`
+  );
+
   runWorkOrderSync("startup").catch((error) => {
-    console.error("[work-order-sync-startup-error]", error.message);
+    console.error(
+      "[work-order-sync-startup-error]",
+      error.message
+    );
   });
+
+  return getWorkOrderSyncStatus();
 }
 
 module.exports = {

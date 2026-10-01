@@ -1,25 +1,27 @@
-const { workOrders: dummyWorkOrders } = require("../data/work-orders");
-
 const {
   fetchWorkOrdersFromInsera
 } = require("./insera-api-service");
 
 const {
+  getAuthenticatedSession
+} = require("./insera-auth-service");
+
+const {
   saveWorkOrders,
   getAllSavedWorkOrders,
   findSavedWorkOrderByNumber,
+  getSavedWorkOrdersByWorkZones,
   getLatestSavedSyncAt,
   saveSyncSuccess,
   saveSyncFailure
 } = require("../database/work-order-repository");
-
 const serviceAreas = {
   SA_BTU: {
     name: "SA Batu",
     workZones: ["BTU", "NTG", "KPO"]
   },
   SA_BLB: {
-    name: "SA Bululawang",
+    name: "SA Blimbing",
     workZones: ["BLB"]
   },
   SA_KLJ: {
@@ -57,18 +59,28 @@ let lastSyncedAt = null;
 let isSyncing = false;
 
 function normalizeText(value) {
-  return String(value || "").trim().toUpperCase();
+  return String(value || "")
+    .trim()
+    .toUpperCase();
 }
 
 function getAllAllowedWorkZones() {
-  return Object.values(serviceAreas).flatMap(
-    (serviceArea) => serviceArea.workZones
-  );
+  return [
+    ...new Set(
+      Object.values(serviceAreas)
+        .flatMap((serviceArea) => serviceArea.workZones)
+        .map(normalizeText)
+        .filter(Boolean)
+    )
+  ];
 }
 
 function isAllowedWorkOrder(workOrder) {
-  return getAllAllowedWorkZones().includes(
-    normalizeText(workOrder.workZone)
+  return (
+    Boolean(workOrder?.woNumber) &&
+    getAllAllowedWorkZones().includes(
+      normalizeText(workOrder.workZone)
+    )
   );
 }
 
@@ -76,45 +88,43 @@ function getServiceAreaByCode(serviceAreaCode) {
   return serviceAreas[serviceAreaCode] || null;
 }
 
+function getServiceAreaCodes() {
+  return Object.keys(serviceAreas);
+}
+
 function loadCachedWorkOrdersFromDatabase() {
   const savedWorkOrders = getAllSavedWorkOrders();
 
-  if (savedWorkOrders.length === 0) {
-    return {
-      loaded: 0,
-      lastSyncedAt: null
-    };
-  }
+  cachedWorkOrders = Array.isArray(savedWorkOrders)
+    ? savedWorkOrders
+    : [];
 
-  cachedWorkOrders = savedWorkOrders;
-  lastSyncedAt = getLatestSavedSyncAt();
+  lastSyncedAt = getLatestSavedSyncAt() || null;
 
   console.log("[work-order-cache] data SQLite dimuat", {
     loaded: cachedWorkOrders.length,
     lastSyncedAt
   });
 
-  return {
-    loaded: cachedWorkOrders.length,
-    lastSyncedAt
-  };
+  return cachedWorkOrders;
 }
 
-function getDataSource() {
+function getAllWorkOrders() {
   if (cachedWorkOrders.length > 0) {
     return cachedWorkOrders;
   }
 
-  const savedWorkOrders = getAllSavedWorkOrders();
+  return loadCachedWorkOrdersFromDatabase();
+}
 
-  if (savedWorkOrders.length > 0) {
-    cachedWorkOrders = savedWorkOrders;
-    lastSyncedAt = getLatestSavedSyncAt();
+function getDataSource() {
+  return getAllWorkOrders();
+}
 
-    return cachedWorkOrders;
-  }
+function getAllWorkOrdersSafe() {
+  const workOrders = getDataSource();
 
-  return dummyWorkOrders;
+  return Array.isArray(workOrders) ? workOrders : [];
 }
 
 function getWorkOrdersByServiceArea(serviceAreaCode) {
@@ -124,47 +134,161 @@ function getWorkOrdersByServiceArea(serviceAreaCode) {
     return [];
   }
 
-  return getDataSource().filter((workOrder) =>
-    serviceArea.workZones.includes(
-      normalizeText(workOrder.workZone)
-    )
-  );
+  const workZones = serviceArea.workZones.map(normalizeText);
+
+  return getAllWorkOrdersSafe()
+    .filter((workOrder) => {
+      return (
+        workZones.includes(normalizeText(workOrder.workZone)) &&
+        normalizeText(workOrder.status) === "STARTWORK"
+      );
+    })
+    .sort((a, b) =>
+      String(b.createdAt || "").localeCompare(
+        String(a.createdAt || "")
+      )
+    );
 }
 
-function getAllWorkOrders() {
-  return getDataSource();
-}
+function getSavedWorkOrdersByServiceArea(serviceAreaCode) {
+  const serviceArea = getServiceAreaByCode(serviceAreaCode);
 
-function findWorkOrderByNumber(woNumber) {
-  const normalizedWoNumber = normalizeText(woNumber);
-
-  const cachedWorkOrder = getDataSource().find(
-    (workOrder) =>
-      normalizeText(workOrder.woNumber) === normalizedWoNumber
-  );
-
-  if (cachedWorkOrder) {
-    return cachedWorkOrder;
+  if (!serviceArea) {
+    return [];
   }
 
-  return findSavedWorkOrderByNumber(normalizedWoNumber);
+  try {
+    const workOrders = getSavedWorkOrdersByWorkZones(
+      serviceArea.workZones
+    );
+
+    return Array.isArray(workOrders)
+      ? workOrders.filter(
+          (workOrder) =>
+            normalizeText(workOrder.status) === "STARTWORK"
+        )
+      : [];
+  } catch (error) {
+    console.warn(
+      "[work-order-service] gagal mengambil data berdasarkan Work Zone:",
+      error.message
+    );
+
+    return getWorkOrdersByServiceArea(serviceAreaCode);
+  }
+}
+
+function findWorkOrderByNumber(workOrderNumber) {
+  const normalizedNumber = normalizeText(workOrderNumber);
+
+  if (!normalizedNumber) {
+    return null;
+  }
+
+  const cachedResult = getAllWorkOrders().find(
+    (workOrder) =>
+      normalizeText(workOrder.woNumber) === normalizedNumber
+  );
+
+  return (
+    cachedResult ||
+    findSavedWorkOrderByNumber(normalizedNumber)
+  );
+}
+
+function isWorkOrderInServiceArea(workOrder, serviceAreaCode) {
+  const serviceArea = getServiceAreaByCode(serviceAreaCode);
+
+  if (!workOrder || !serviceArea) {
+    return false;
+  }
+
+  return serviceArea.workZones
+    .map(normalizeText)
+    .includes(normalizeText(workOrder.workZone));
 }
 
 function getLastSyncedAt(workOrders = []) {
+  const fromWorkOrder = Array.isArray(workOrders)
+    ? workOrders.find((workOrder) => workOrder?.syncedAt)
+        ?.syncedAt
+    : null;
+
   return (
-    workOrders[0]?.syncedAt ||
+    fromWorkOrder ||
     lastSyncedAt ||
     getLatestSavedSyncAt() ||
     null
   );
 }
 
+async function fetchAllPagesForWorkZone(workZone, pageSize = 100) {
+  const normalizedWorkZone = normalizeText(workZone);
+  const allWorkOrders = [];
+
+  let page = 1;
+  let totalPages = null;
+
+  while (true) {
+    console.log("[work-order-sync] mengambil data Work Zone", {
+      workZone: normalizedWorkZone,
+      page
+    });
+
+    const result = await fetchWorkOrdersFromInsera({
+      page,
+      pageSize,
+      workZone: normalizedWorkZone
+    });
+
+    const pageWorkOrders = Array.isArray(result.workOrders)
+      ? result.workOrders
+      : [];
+
+    allWorkOrders.push(...pageWorkOrders);
+
+    console.log("[work-order-sync] halaman diterima", {
+      workZone: normalizedWorkZone,
+      page,
+      records: pageWorkOrders.length,
+      recordsFiltered: result.recordsFiltered,
+      totalPages: result.totalPages
+    });
+
+    if (Number(result.totalPages) > 0) {
+      totalPages = Number(result.totalPages);
+    }
+
+    if (
+      (totalPages && page >= totalPages) ||
+      pageWorkOrders.length === 0 ||
+      pageWorkOrders.length < pageSize
+    ) {
+      break;
+    }
+
+    page += 1;
+
+    if (page > 100) {
+      throw new Error(
+        `Pagination ${normalizedWorkZone} melewati batas 100 halaman.`
+      );
+    }
+  }
+
+  return allWorkOrders;
+}
+
 async function syncWorkOrdersFromInsera() {
   if (isSyncing) {
+    console.log(
+      "[work-order-sync] sync dilewati karena proses sebelumnya masih berjalan."
+    );
+
     return {
       skipped: true,
       totalFetched: 0,
-      totalSaved: cachedWorkOrders.length,
+      totalSaved: 0,
       lastSyncedAt
     };
   }
@@ -172,73 +296,97 @@ async function syncWorkOrdersFromInsera() {
   isSyncing = true;
 
   try {
-    const MAX_PAGES = 10;
-    const PAGE_SIZE = 100;
-
-    const allWorkOrders = [];
-    let totalJatim = 0;
-
-    for (let page = 1; page <= MAX_PAGES; page += 1) {
-      const result = await fetchWorkOrdersFromInsera({
-        page,
-        pageSize: PAGE_SIZE
-      });
-
-      if (page === 1) {
-        totalJatim = result.recordsFiltered;
-      }
-
-      allWorkOrders.push(...result.workOrders);
-
-      if (result.workOrders.length < PAGE_SIZE) {
-        break;
-      }
-    }
-
-    const filteredWorkOrders = allWorkOrders.filter(
-      isAllowedWorkOrder
+    console.log(
+      "[work-order-sync] memverifikasi satu sesi WFM untuk seluruh Service Area..."
     );
 
-    if (filteredWorkOrders.length === 0) {
+    // Login/session dibuat sekali saja sebelum request seluruh workzone.
+    await getAuthenticatedSession();
+
+    console.log(
+      "[work-order-sync] memulai sinkronisasi seluruh Service Area..."
+    );
+
+    const allWorkOrders = [];
+    const totalsByWorkZone = {};
+
+    for (const workZone of getAllAllowedWorkZones()) {
+      const workOrders = await fetchAllPagesForWorkZone(
+        workZone,
+        100
+      );
+
+      totalsByWorkZone[workZone] = workOrders.length;
+      allWorkOrders.push(...workOrders);
+    }
+
+    const totalFetched = allWorkOrders.length;
+
+    const uniqueWorkOrders = Array.from(
+      new Map(
+        allWorkOrders
+          .filter(isAllowedWorkOrder)
+          .map((workOrder) => [
+            normalizeText(workOrder.woNumber),
+            workOrder
+          ])
+      ).values()
+    );
+
+    if (uniqueWorkOrders.length === 0) {
       throw new Error(
-        "Sinkronisasi dibatalkan: tidak ada Work Order sesuai wilayah bot."
+        "Sync selesai tetapi tidak ada Work Order STARTWORK dari seluruh workzone."
       );
     }
 
     const syncedAt = new Date().toISOString();
 
     const databaseResult = saveWorkOrders(
-      filteredWorkOrders,
+      uniqueWorkOrders,
       syncedAt
     );
 
-    cachedWorkOrders = filteredWorkOrders.map((workOrder) => ({
-      ...workOrder,
-      syncedAt
-    }));
+    cachedWorkOrders = uniqueWorkOrders.map(
+      (workOrder) => ({
+        ...workOrder,
+        syncedAt
+      })
+    );
 
     lastSyncedAt = syncedAt;
 
     saveSyncSuccess(syncedAt);
 
-    console.log("[insera-sync] berhasil", {
-      fetched: allWorkOrders.length,
-      saved: databaseResult.saved,
-      totalJatim,
-      source: "Insera API + SQLite"
+    console.log("[work-order-sync] sinkronisasi berhasil", {
+      totalFetched,
+      totalAllowed: uniqueWorkOrders.length,
+      totalSaved:
+        databaseResult?.saved ?? uniqueWorkOrders.length,
+      totalsByWorkZone,
+      lastSyncedAt: syncedAt
     });
 
     return {
       skipped: false,
-      totalFetched: allWorkOrders.length,
-      totalSaved: databaseResult.saved,
-      totalJatim,
-      lastSyncedAt
+      totalFetched,
+      totalAllowed: uniqueWorkOrders.length,
+      totalSaved:
+        databaseResult?.saved ?? uniqueWorkOrders.length,
+      totalsByWorkZone,
+      lastSyncedAt: syncedAt,
+      workOrders: cachedWorkOrders
     };
   } catch (error) {
-    saveSyncFailure(error.message);
-
     console.error("[insera-sync-error]", error.message);
+
+    try {
+      saveSyncFailure(error.message);
+    } catch (databaseError) {
+      console.error(
+        "[sync-failure-save-error]",
+        databaseError.message
+      );
+    }
 
     throw error;
   } finally {
@@ -246,12 +394,33 @@ async function syncWorkOrdersFromInsera() {
   }
 }
 
+function getStartworkByServiceArea(serviceAreaCode) {
+  return getWorkOrdersByServiceArea(serviceAreaCode);
+}
+
+function getAllStartwork() {
+  return getAllWorkOrders().filter(
+    (workOrder) =>
+      normalizeText(workOrder.status) === "STARTWORK"
+  );
+}
+
 module.exports = {
+  serviceAreas,
+  getServiceAreaCodes,
+  getServiceAreaByCode,
+  getAllAllowedWorkZones,
+  normalizeText,
+  isAllowedWorkOrder,
+  isWorkOrderInServiceArea,
+  loadCachedWorkOrdersFromDatabase,
+  getDataSource,
   getAllWorkOrders,
   getWorkOrdersByServiceArea,
-  getServiceAreaByCode,
+  getSavedWorkOrdersByServiceArea,
+  getStartworkByServiceArea,
+  getAllStartwork,
   findWorkOrderByNumber,
   getLastSyncedAt,
-  loadCachedWorkOrdersFromDatabase,
   syncWorkOrdersFromInsera
 };

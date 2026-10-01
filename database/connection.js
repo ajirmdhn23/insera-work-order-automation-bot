@@ -10,7 +10,10 @@ if (!fs.existsSync(storageDirectory)) {
   fs.mkdirSync(storageDirectory, { recursive: true });
 }
 
-const databasePath = path.join(storageDirectory, "insera-bot.db");
+const databasePath = path.join(
+  storageDirectory,
+  "insera-bot.db"
+);
 
 const db = new Database(databasePath);
 
@@ -51,6 +54,26 @@ db.exec(`
     status_date TEXT,
     schedstart TEXT,
     booking_date TEXT,
+
+    sc_order_number TEXT,
+    oss_order_id TEXT,
+    service_number TEXT,
+    area_tif TEXT,
+    regional_tif TEXT,
+    district_tif TEXT,
+    region_site_id TEXT,
+    customer_name TEXT,
+    service_address TEXT,
+    witel TEXT,
+    contact_number TEXT,
+    measurement TEXT,
+    measurement_date TEXT,
+    measurement_result TEXT,
+    wo_class TEXT,
+    contract_number TEXT,
+    channel_id_tsel TEXT,
+    order_id_tsel TEXT,
+
     synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -80,15 +103,72 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS personal_subscriptions (
+    chat_id TEXT PRIMARY KEY,
+    telegram_user_id TEXT NOT NULL,
+    telegram_username TEXT,
+    service_area_code TEXT NOT NULL,
+    notification_interval_minutes INTEGER NOT NULL DEFAULT 15,
+    notifications_enabled INTEGER NOT NULL DEFAULT 1,
+    last_notified_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_personal_subscriptions_area
+  ON personal_subscriptions(service_area_code);
 `);
 
-const workOrderColumns = db
-  .prepare("PRAGMA table_info(work_orders)")
-  .all()
-  .map((column) => column.name);
-
-if (!workOrderColumns.includes("crm_order_type")) {
-  db.exec("ALTER TABLE work_orders ADD COLUMN crm_order_type TEXT");
+function getWorkOrderColumnNames() {
+  return db
+    .prepare("PRAGMA table_info(work_orders)")
+    .all()
+    .map((column) => column.name);
 }
+
+function ensureWorkOrderColumns() {
+  const requiredColumns = {
+    crm_order_type: "TEXT",
+    sc_order_number: "TEXT",
+    oss_order_id: "TEXT",
+    service_number: "TEXT",
+    area_tif: "TEXT",
+    regional_tif: "TEXT",
+    district_tif: "TEXT",
+    region_site_id: "TEXT",
+    customer_name: "TEXT",
+    service_address: "TEXT",
+    witel: "TEXT",
+    contact_number: "TEXT",
+    measurement: "TEXT",
+    measurement_date: "TEXT",
+    measurement_result: "TEXT",
+    wo_class: "TEXT",
+    contract_number: "TEXT",
+    channel_id_tsel: "TEXT",
+    order_id_tsel: "TEXT"
+  };
+
+  const existingColumns = new Set(
+    getWorkOrderColumnNames()
+  );
+
+  for (const [columnName, columnType] of Object.entries(
+    requiredColumns
+  )) {
+    if (!existingColumns.has(columnName)) {
+      db.exec(
+        `ALTER TABLE work_orders ADD COLUMN ${columnName} ${columnType}`
+      );
+
+      console.log(
+        `[database] kolom work_orders ditambahkan: ${columnName}`
+      );
+    }
+  }
+}
+
+ensureWorkOrderColumns();
 
 module.exports = { db };
